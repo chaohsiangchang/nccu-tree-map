@@ -1,3 +1,333 @@
-tree-map/
-  index.html
-  trees.geojson
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>樹木地圖（範例模板）</title>
+
+  <!-- Leaflet -->
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+
+  <!-- (可選) MarkerCluster：點很多時很好用 -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, "Noto Sans TC", "PingFang TC", sans-serif; }
+    #app { height: 100%; display: grid; grid-template-columns: 360px 1fr; }
+    #sidebar { border-right: 1px solid #ddd; padding: 12px; overflow: auto; }
+    #map { height: 100%; }
+
+    .title { font-size: 18px; font-weight: 700; margin: 4px 0 10px; }
+    .muted { color: #666; font-size: 12px; line-height: 1.5; }
+    .row { margin: 10px 0; }
+    label { display: block; font-size: 12px; margin-bottom: 6px; color: #333; }
+    input, select {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ccc;
+      border-radius: 10px;
+      font-size: 14px;
+      outline: none;
+    }
+    input:focus, select:focus { border-color: #888; }
+    button {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #222;
+      background: #222;
+      color: white;
+      border-radius: 10px;
+      font-size: 14px;
+      cursor: pointer;
+    }
+    button.secondary { background: white; color: #222; }
+    .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+    .card { border: 1px solid #e5e5e5; border-radius: 14px; padding: 10px; }
+    .card .k { font-size: 12px; color: #666; }
+    .card .v { font-size: 16px; font-weight: 700; margin-top: 2px; }
+
+    .popup h3 { margin: 0 0 6px; font-size: 16px; }
+    .popup .meta { font-size: 12px; color: #555; line-height: 1.5; }
+    .popup img { max-width: 240px; border-radius: 10px; margin-top: 8px; display:block; }
+    .pill { display: inline-block; font-size: 12px; padding: 4px 8px; border-radius: 999px; background: #f2f2f2; margin-right: 6px; margin-top: 6px; }
+    .pill.green { background: #e8f7ea; }
+    .pill.yellow { background: #fff6d6; }
+
+    @media (max-width: 900px) {
+      #app { grid-template-columns: 1fr; grid-template-rows: 320px 1fr; }
+      #sidebar { border-right: none; border-bottom: 1px solid #ddd; }
+    }
+  </style>
+</head>
+
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="title">樹木地圖（範例模板）</div>
+      <div class="muted">
+        1) 把 <b>trees.geojson</b> 換成你的資料<br/>
+        2) 直接用 GitHub Pages 上線<br/>
+        欄位建議：tree_id / name_zh / species / area / note / photo / adoptable
+      </div>
+
+      <div class="row">
+        <label for="speciesSelect">樹種（species）篩選</label>
+        <select id="speciesSelect">
+          <option value="">全部</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="areaSelect">區域（area）篩選</label>
+        <select id="areaSelect">
+          <option value="">全部</option>
+        </select>
+      </div>
+
+      <div class="row">
+        <label for="qInput">關鍵字搜尋（樹名/樹種/備註）</label>
+        <input id="qInput" type="text" placeholder="例如：樟樹 / 指南溪 / 編號 A-102" />
+      </div>
+
+      <div class="row">
+        <label>
+          <input id="adoptableOnly" type="checkbox" />
+          只顯示「可認養」(adoptable=true)
+        </label>
+      </div>
+
+      <div class="row">
+        <button id="applyBtn">套用篩選</button>
+      </div>
+
+      <div class="row">
+        <button id="resetBtn" class="secondary">重設</button>
+      </div>
+
+      <div class="stats">
+        <div class="card">
+          <div class="k">目前顯示</div>
+          <div class="v" id="countShown">0</div>
+        </div>
+        <div class="card">
+          <div class="k">資料總數</div>
+          <div class="v" id="countTotal">0</div>
+        </div>
+      </div>
+
+      <div class="row muted" style="margin-top:12px;">
+        小技巧：點地圖上的樹會顯示資訊卡；搜尋支援部分比對。
+      </div>
+    </aside>
+
+    <main id="map"></main>
+  </div>
+
+<script>
+  // ====== 基本設定 ======
+  // 預設中心點：先用政大附近；你可改成校園中心座標
+  const DEFAULT_CENTER = [24.9876, 121.5757];
+  const DEFAULT_ZOOM = 16;
+
+  // GeoJSON 檔名
+  const DATA_URL = './trees.geojson';
+
+  // ====== 地圖初始化 ======
+  const map = L.map('map', { zoomControl: true }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
+
+  // OpenStreetMap 底圖
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 20,
+    attribution: '&copy; OpenStreetMap contributors'
+  }).addTo(map);
+
+  // MarkerCluster（可用來群聚點位）
+  const cluster = L.markerClusterGroup();
+
+  // 狀態
+  let allFeatures = [];
+  let markerById = new Map();
+
+  // ====== UI 元件 ======
+  const speciesSelect = document.getElementById('speciesSelect');
+  const areaSelect = document.getElementById('areaSelect');
+  const qInput = document.getElementById('qInput');
+  const adoptableOnly = document.getElementById('adoptableOnly');
+  const applyBtn = document.getElementById('applyBtn');
+  const resetBtn = document.getElementById('resetBtn');
+  const countShown = document.getElementById('countShown');
+  const countTotal = document.getElementById('countTotal');
+
+  // ====== 小工具 ======
+  function norm(s) {
+    return (s ?? '').toString().trim().toLowerCase();
+  }
+
+  function getProps(f) {
+    return f.properties || {};
+  }
+
+  function buildPopupHTML(props) {
+    const title = props.name_zh || props.species || '樹木';
+    const id = props.tree_id ? `編號：${props.tree_id}` : '';
+    const species = props.species ? `樹種：${props.species}` : '';
+    const area = props.area ? `區域：${props.area}` : '';
+    const note = props.note ? `備註：${props.note}` : '';
+    const adoptable = props.adoptable === true;
+
+    const pills = [
+      props.eco_cultural === true ? '<span class="pill yellow">生態/文化意義</span>' : '',
+      adoptable ? '<span class="pill green">可認養</span>' : '<span class="pill">不可/已認養</span>',
+    ].join('');
+
+    const photo = props.photo
+      ? `<img src="${props.photo}" alt="${title}" loading="lazy" />`
+      : '';
+
+    return `
+      <div class="popup">
+        <h3>${title}</h3>
+        <div class="meta">
+          ${pills}<br/>
+          ${id ? id + '<br/>' : ''}
+          ${species ? species + '<br/>' : ''}
+          ${area ? area + '<br/>' : ''}
+          ${note ? note + '<br/>' : ''}
+        </div>
+        ${photo}
+      </div>
+    `;
+  }
+
+  function makeMarker(feature) {
+    const props = getProps(feature);
+    const [lng, lat] = feature.geometry.coordinates;
+    const marker = L.marker([lat, lng]);
+
+    marker.bindPopup(buildPopupHTML(props));
+    if (props.tree_id) markerById.set(props.tree_id, marker);
+
+    return marker;
+  }
+
+  function populateSelect(selectEl, values) {
+    // 保留第一個 "全部"
+    const first = selectEl.options[0];
+    selectEl.innerHTML = '';
+    selectEl.appendChild(first);
+
+    values.sort((a,b) => a.localeCompare(b, 'zh-Hant'));
+    for (const v of values) {
+      const opt = document.createElement('option');
+      opt.value = v;
+      opt.textContent = v;
+      selectEl.appendChild(opt);
+    }
+  }
+
+  function updateStats(shown, total) {
+    countShown.textContent = shown;
+    countTotal.textContent = total;
+  }
+
+  function applyFilters() {
+    const species = speciesSelect.value;
+    const area = areaSelect.value;
+    const q = norm(qInput.value);
+    const adoptOnly = adoptableOnly.checked;
+
+    const filtered = allFeatures.filter(f => {
+      const p = getProps(f);
+
+      if (species && p.species !== species) return false;
+      if (area && p.area !== area) return false;
+      if (adoptOnly && p.adoptable !== true) return false;
+
+      if (q) {
+        const hay = [
+          p.tree_id, p.name_zh, p.species, p.area, p.note
+        ].map(norm).join(' | ');
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    // 重新繪製
+    cluster.clearLayers();
+    for (const f of filtered) {
+      cluster.addLayer(makeMarker(f));
+    }
+    map.addLayer(cluster);
+
+    updateStats(filtered.length, allFeatures.length);
+
+    // 自動縮放到顯示點位範圍
+    if (filtered.length > 0) {
+      const bounds = L.featureGroup(cluster.getLayers()).getBounds();
+      map.fitBounds(bounds.pad(0.2));
+    }
+  }
+
+  function resetAll() {
+    speciesSelect.value = '';
+    areaSelect.value = '';
+    qInput.value = '';
+    adoptableOnly.checked = false;
+    applyFilters();
+  }
+
+  // ====== 載入資料 ======
+  async function init() {
+    const res = await fetch(DATA_URL);
+    if (!res.ok) {
+      alert('讀取 trees.geojson 失敗，請確認檔案存在於同一資料夾。');
+      return;
+    }
+    const geojson = await res.json();
+
+    // 支援 FeatureCollection
+    allFeatures = (geojson && geojson.features) ? geojson.features : [];
+    updateStats(allFeatures.length, allFeatures.length);
+
+    // 產生下拉選單選項
+    const speciesSet = new Set();
+    const areaSet = new Set();
+
+    for (const f of allFeatures) {
+      const p = getProps(f);
+      if (p.species) speciesSet.add(p.species);
+      if (p.area) areaSet.add(p.area);
+    }
+
+    populateSelect(speciesSelect, [...speciesSet]);
+    populateSelect(areaSelect, [...areaSet]);
+
+    // 初始呈現
+    applyFilters();
+  }
+
+  // ====== 事件 ======
+  applyBtn.addEventListener('click', applyFilters);
+  resetBtn.addEventListener('click', resetAll);
+
+  // Enter 快速搜尋
+  qInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') applyFilters();
+  });
+
+  init();
+</script>
+</body>
+</html>
